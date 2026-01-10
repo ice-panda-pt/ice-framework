@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+# @file network
+# @brief ICE Framework - Network Module
+# @description Funções para gestão e validação de rede.
+# Namespace: ice_net_
+
+set -euo pipefail
+
+# Garante que o core está carregado para usar ice_log e cores
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'network' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_NETWORK_LOADED:-}" ]] && return 0
+readonly _ICE_NETWORK_LOADED=1
+
+# # --- SECTION: Verificação de Conectividade ---
+
+# @description Verifica se um porto específico está aberto num host
+# @arg $1 string Hostname ou IP
+# @arg $2 int Porto
+ice_net_port_open() {
+	local host="${1:-}"
+	local port="${2:-}"
+	if (timeout 2 bash -c "</dev/tcp/$host/$port") &>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# # @description Aguarda até que um serviço esteja online
+# # @arg $1 string Hostname ou IP
+# # @arg $2 int Porto
+# # @arg $3 int Tentativas (padrão: 5)
+# ice_net_wait_service() {
+#     local host="$1"
+#     local port="$2"
+#     local max_attempts="${3:-5}"
+#     local count=1
+
+#     ice_info "A aguardar serviço em $host:$port..."
+#     while ! ice_net_port_open "$host" "$port"; do
+#         if (( count >= max_attempts )); then
+#             ice_error "Serviço em $host:$port não ficou disponível após $max_attempts tentativas."
+#             return 1
+#         fi
+#         echo -n "."
+#         sleep 2
+#         ((count++))
+#     done
+#     echo ""
+#     ice_success "Serviço em $host:$port está online!"
+# }
+
+# # --- SECTION: Informação de IP ---
+
+# # @description Obtém o IP público da máquina
+# ice_net_get_public_ip() {
+#     local ip
+#     ip=$(curl -s https://ifconfig.me || curl -s https://api.ipify.org)
+#     if [[ -n "$ip" ]]; then
+#         echo "$ip"
+#     else
+#         ice_error "Não foi possível obter o IP público."
+#         return 1
+#     fi
+# }
+
+# # @description Obtém o IP da rede local (interface principal)
+# ice_net_get_local_ip() {
+#     hostname -I | awk '{print $1}'
+# }
+
+# # --- SECTION: Validação ---
+
+# # @description Valida se uma string é um formato de IP válido
+# # @arg $1 string IP a validar
+# ice_net_is_valid_ip() {
+#     local ip="$1"
+#     local stat=1
+#     if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+#         OIFS=$IFS
+#         IFS='.'
+#         read -r -a ip <<< "$ip"
+#         IFS=$OIFS
+#         [[ ${ip[0]} -le 255 && ${ip[1]} -le 255 && ${ip[2]} -le 255 && ${ip[3]} -le 255 ]]
+#         stat=$?
+#     fi
+#     return $stat
+# }
+
+# @description Verifica se um hostname é válido seguindo a RFC 1123
+# @arg $1 string Hostname a validar
+# @stdout Retorna 0 se válido, 1 se inválido
+ice_net_is_valid_hostname() {
+	local hname="$1"
+
+	# Remove o ponto final se existir (tratamento de FQDN)
+	hname="${hname%.}"
+
+	# Validações globais: não pode ser vazio nem maior que 253 chars
+	[[ -z "$hname" || ${#hname} -gt 253 ]] && return 1
+
+	local label
+	local labels
+
+	# Divide por pontos
+	IFS='.' read -ra labels <<<"$hname"
+
+	for label in "${labels[@]}"; do
+		# 1. Tamanho do rótulo (1 a 63)
+		[[ ${#label} -gt 63 || -z "$label" ]] && return 1
+
+		# 2. Conteúdo:
+		# - Deve começar por letra ou número ^[a-zA-Z0-9]
+		# - Pode ter hífenes no meio [-a-zA-Z0-9]*
+		# - Deve terminar por letra ou número [a-zA-Z0-9]$ (se tiver >1 char)
+		if [[ ! "$label" =~ ^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?$ ]]; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+# # @description Verifica se um hostname resolve para um IP
+# # @arg $1 string Hostname
+# ice_net_resolve() {
+#     local host="$1"
+#     if ! ice_net_is_valid_hostname "$host"; then
+#         ice_error "Hostname inválido: $host"
+#         return 1
+#     fi
+
+#     if command -v getent >/dev/null 2>&1; then
+#         getent hosts "$host" >/dev/null 2>&1
+#         return $?
+#     else
+#         ping -c 1 -W 1 "$host" >/dev/null 2>&1
+#         return $?
+#     fi
+# }
+
+# @description Altera o hostname do sistema de forma persistente
+# @arg $1 string Novo hostname
+ice_net_set_hostname() {
+	local new_host="${1:-}" old_host
+	old_host=$(hostname)
+	[[ -z "$new_host" ]] && return 1
+	# 1. Validar o novo nome usando a tua função RFC 1123
+	if ! ice_net_is_valid_hostname "$new_host"; then
+		ice_error "Hostname inválido: '$new_host'. Deve seguir a RFC 1123."
+		return 1
+	fi
+
+	# Se o nome já for o pretendido, não faz nada
+	[[ "$new_host" == "$old_host" ]] && {
+		ice_info "Hostname já está definido como '$new_host'."
+		return 0
+	}
+
+	ice_info "A alterar hostname de '$old_host' para '$new_host'..."
+
+	# 3. Alterar via hostnamectl (Systemd) - Altera memória e /etc/hostname
+	if command -v hostnamectl >/dev/null 2>&1; then
+		hostnamectl set-hostname "$new_host"
+	else
+		echo "$new_host" >/etc/hostname
+		hostname "$new_host"
+	fi
+
+	# 4. Atualizar o /etc/hosts para evitar erros de resolução de sudo/serviços
+	# Substitui a ocorrência do nome antigo associado ao loopback
+	if grep -q "$old_host" /etc/hosts; then
+		sed -i "s/$old_host/$new_host/g" /etc/hosts
+	else
+		# Se não encontrar o antigo, garante que o novo está lá
+		echo "127.0.1.1 $new_host" >>/etc/hosts
+	fi
+
+	ice_success "Hostname atualizado com sucesso para: $new_host"
+	ice_warn "Nota: Pode ser necessário reiniciar a sessão do terminal para ver as mudanças no prompt."
+}
+
+# @description Verifica se existe conectividade com a Internet
+# @exit 0 se houver internet, 1 se não houver
+ice_net_check() {
+	local test_host="8.8.8.8" timeout=3
+
+	ping -c 1 -W "$timeout" "$test_host" >/dev/null 2>&1 && return 0
+
+	if command -v host >/dev/null 2>&1; then
+		host google.com >/dev/null 2>&1 && return 0
+	fi
+
+	return 1
+}
+
+# # @description Para a execução se não houver internet (Assert de Rede)
+# ice_net_require() {
+#     if ! ice_net_check; then
+#         ice_fatal "Este script requer uma ligação ativa à Internet."
+#     fi
+# }
+
+# @description Verifica se um Host/IP está online
+ice_net_host_is_up() {
+	ping -c 1 -W 2 "${1:-}" >/dev/null 2>&1
+}

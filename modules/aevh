@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+# @file aevh
+# @brief ICE Framework - AEVH
+# Namespace: ice_aevh_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'aevh' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_AEVH_LOADED:-}" ]] && return 0
+readonly _ICE_AEVH_LOADED=1
+
+ice_load_module "log"
+ice_load_module "system"
+
+# Alguns caminhos necessários
+readonly AEVH_ROOT=${AEVH_ROOT:-"/opt/aevh"}
+readonly AEVH_BIN=${AEVH_BIN:-"$AEVH_ROOT/bin"}
+readonly AEVH_CONF=${AEVH_CONF:-"$AEVH_ROOT/config"}
+readonly AEVH_DATA=${AEVH_DATA:-"$AEVH_ROOT/data"}
+readonly AEVH_LOG=${AEVH_LOG:-"$AEVH_ROOT/log"}
+readonly AEVH_LOGFILE=${AEVH_LOGFILE:-"$AEVH_LOG/aevh.log"}
+
+ice_aevh_init() {
+	ice_set_log_file "$AEVH_LOGFILE"
+	mkdir -p "$AEVH_BIN" "$AEVH_CONF" "$AEVH_DATA" "$AEVH_LOG"
+	touch "$AEVH_LOGFILE"
+	chown master:master "$AEVH_LOGFILE"
+}
+
+# Habilita repositórios
+ice_aevh_enable_repos() {
+	ice_needs_root
+	local list="/etc/apt/sources.list"
+	local dst="/etc/apt/sources.list.d/aevh-sources.list"
+	local src=""
+	ice_sys_debian12 && src="$AEVH_CONF/apt/bookworm.list"
+	ice_sys_debian13 && src="$AEVH_CONF/apt/trixie.list"
+	[[ -z "$src" ]] && {
+		ice_warn "SO não reconhecido"
+		return 1
+	}
+	[[ ! -f "$src" ]] && {
+		ice_warn "Ficheiro não encontrado: $src"
+		return 1
+	}
+	mkdir -p "$(dirname "$dst")"
+	cp "$src" "$dst"
+	echo "# O conteúdo foi movido para $dst" >"$list"
+	ice_info "A atualizar repositórios"
+	ice_apt_update
+}
+
+ice_aevh_enable_flatpak() {
+	ice_needs_root
+	ice_apt_require_bin flatpak
+	flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+	flatpak config --system --set languages "pt;en"
+}
+
+ice_aevh_is_xfce4() { return 0; }
+
+# Deteta se a máquina é uma HP 7800
+ice_aevh_is_hp7800() { [[ $(ice_sys_get_hardware_model) == *"HP Compaq dc7800"* ]]; }
+
+ice_aevh_init

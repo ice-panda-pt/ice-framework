@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+# @file config
+# @brief ICE Framework - Configuration File Management
+# Namespace: ice_cfg_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'config' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_CONFIG_LOADED:-}" ]] && return 0
+readonly _ICE_CONFIG_LOADED=1
+
+ice_load_module "log"
+
+# @description Obtém o valor de uma chave num ficheiro (formato chave=valor)
+# @arg $1 string Caminho do ficheiro
+# @arg $2 string Chave a procurar
+# @arg $3 string Valor padrão (opcional)
+ice_cfg_get_value() {
+	local file="$1" key="$2" default="${3:-}" value
+	[[ ! -f "$file" ]] && {
+		echo "$default"
+		return 1
+	}
+
+	# Usamos o separador de campo do AWK de forma mais inteligente
+	value=$(awk -v target="$key" '
+    BEGIN { FS="=" }
+
+    # 1. Ignorar comentários e linhas vazias
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+
+    {
+        # 2. Extrair a chave e limpar espaços
+        current_key = $1
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_key)
+
+        if (current_key == target) {
+            # 3. Extrair tudo após o primeiro "="
+            val = substr($0, index($0, "=") + 1)
+
+            # 4. Limpeza agressiva: Espaços -> Aspas -> Espaços (limpa dentro e fora)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+            gsub(/^["\047]|["\047]$/, "", val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+
+            # 5. Marcador para distinguir "valor vazio" de "não encontrado"
+            print "FOUND:" val
+            exit
+        }
+    }' "$file")
+
+	# Tratamento do resultado
+	if [[ "$value" =~ ^FOUND: ]]; then
+		echo "${value#FOUND:}"
+		return 0
+	else
+		echo "$default"
+		return 1
+	fi
+}
+
+# @description Define ou atualiza um valor num ficheiro (formato chave=valor)
+# @arg $1 string Caminho do ficheiro
+# @arg $2 string Chave
+# @arg $3 string Novo valor
+ice_cfg_set_value() {
+	local file="$1" key="$2" val="$3"
+	[[ -z "$file" || -z "$key" ]] && {
+		ice_error "Parâmetros em falta"
+		return 1
+	}
+	[[ ! -f "$file" ]] && {
+		ice_error "Ficheiro não encontrado: $file"
+		return 1
+	}
+	[[ ! -w "$file" ]] && {
+		ice_error "Ficheiro sem permissão de escrita: $file"
+		return 1
+	}
+
+	local tmp_file
+	tmp_file=$(mktemp)
+
+	# Usamos LC_ALL=C para garantir que o processamento de texto é uniforme
+	LC_ALL=C awk -v k="$key" -v v="$val" '
+    BEGIN { found = 0 }
+    {
+        # Preserva comentários e linhas vazias
+        if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
+            print $0
+            next
+        }
+
+        # Extração segura da chave
+        line = $0
+        split(line, parts, "=")
+        current_key = parts[1]
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_key)
+
+        if (current_key == k) {
+            found = 1
+            # Mantemos a tua lógica de prefixo, mas com garantia de limpeza
+            if (match(line, /^[^=]*=[[:space:]]*/)) {
+                prefix = substr(line, RSTART, RLENGTH)
+                print prefix v
+            } else {
+                print k "=" v
+            }
+        } else {
+            print $0
+        }
+    }
+    END {
+        if (found == 0) {
+            # Evita criar múltiplas linhas vazias desnecessárias
+            # Apenas garante que se o ficheiro não termina em newline, nós adicionamos
+            print k "=" v
+        }
+    }
+    ' "$file" >"$tmp_file"
+
+	# Operação atómica: mover é mais seguro que cat
+	mv "$tmp_file" "$file"
+
+	# IMPORTANTE: ice_success pode gerar cores ANSI.
+	# Em testes de unidade, às vezes é melhor silenciar ou garantir que vai para stderr
+	ice_success "Configuração $key=$val em $file" >&2
+	return 0
+}
+
+# # @description Comenta uma linha (chave) num ficheiro
+# # @arg $1 string Caminho do ficheiro
+# # @arg $2 string Chave
+# ice_cfg_comment() {
+# 	local file="$1"
+# 	local key="$2"
+# 	sed -i "s/^\(${key}=.*\)/#\1/" "$file"
+# }
+
+# # @description Verifica se uma chave existe num ficheiro (formato chave=valor)
+# # @arg $1 string Caminho do ficheiro
+# # @arg $2 string Chave a procurar
+# # @exit 0 se existe, 1 se não existe, 2 se o ficheiro não for legível
+# ice_cfg_key_exists() {
+# 	[[ "$#" -ne 2 ]] && {
+# 		ice_warn "ice_cfg_key_exists: Exige 2 parâmetros (ficheiro, chave)"
+# 		return 1
+# 	}
+
+# 	local file="$1" key="$2"
+# 	[[ ! -r "$file" ]] && return 2
+
+# 	# Usamos awk para ler o ficheiro e comparar a string literal da chave
+# 	# Isto é imune a caracteres como [ ] . ( ) *
+# 	if awk -F'=' -v target="$key" '
+#     {
+#         # Ignora comentários e linhas vazias
+#         if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) next
+
+#         # Limpa espaços da primeira parte (a chave)
+#         current_key = $1
+#         gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_key)
+
+#         # Comparação de string exata (não regex)
+#         if (current_key == target) {
+#             found = 1
+#             exit 0
+#         }
+#     }
+#     END { if (!found) exit 1 }' "$file"; then
+# 		return 0
+# 	fi
+
+# 	return 1
+# }

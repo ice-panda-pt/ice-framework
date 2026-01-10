@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034
+
+# @file core
+# @brief ICE Framework - Main Core Module
+# @description Este ficheiro contém a lógica central do framework ICE.
+# Namespace: ice_
+
+set -euo pipefail
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_CORE_LOADED:-}" ]] && return 0
+readonly _ICE_CORE_LOADED=1
+
+# --- 1. INICIALIZAÇÃO E CONFIGURAÇÃO ---
+
+# Definir a base do framework
+readonly ICE_BASE_DIR="/opt/ice"
+
+# @description Inicializa cores e deteta o ambiente
+ice_init() {
+	if [[ -t 1 ]]; then
+		readonly ICE_RED='\033[0;31m'
+		readonly ICE_GREEN='\033[0;32m'
+		readonly ICE_YELLOW='\033[1;33m'
+		readonly ICE_BLUE='\033[0;34m'
+		readonly ICE_PURPLE='\033[0;35m'
+		readonly ICE_NC='\033[0m'
+	else
+		readonly ICE_RED='' ICE_GREEN='' ICE_YELLOW='' ICE_BLUE='' ICE_PURPLE='' ICE_NC=''
+	fi
+}
+
+# @description Carrega ficheiros de configuração (.ice.conf)
+ice_load_config() {
+	local locations=("$ICE_BASE_DIR/ice.conf" "/etc/ice.conf" "${HOME:-}/.ice.conf" "$(pwd)/.ice.conf")
+	for loc in "${locations[@]}"; do
+		if [[ -f "$loc" ]]; then
+			# shellcheck source=/dev/null
+			source "$loc"
+		fi
+	done
+	#export ICE_LOG_LEVEL="${ICE_LOG_LEVEL:-INFO}"
+	#export ICE_WEBHOOK_URL="${ICE_WEBHOOK_URL:-}"
+}
+
+# @description Carrega um módulo adicional do framework ICE
+# @arg $1 string Nome do módulo (ex: network)
+ice_load_module() {
+	local module_name="${1:-}"
+	# Procura primeiro no caminho de instalação, depois no caminho local (dev)
+	local paths=(
+		"$ICE_BASE_DIR/modules/$module_name"
+		"$(pwd)/modules/$module_name"
+	)
+
+	for path in "${paths[@]}"; do
+		if [[ -f "$path" ]]; then
+			# shellcheck source=/dev/null
+			source "$path"
+			return 0
+		fi
+	done
+
+	echo "Módulo não encontrado: $module_name"
+	return 1
+}
+
+# # --- 2. LOGGING E NOTIFICAÇÕES ---
+
+# ice_notify() {
+# 	local msg="$1"
+# 	local url="${ICE_WEBHOOK_URL:-}"
+# 	[[ -z "$url" ]] && return 0
+# 	curl -s -X POST -H "Content-Type: application/json" -d "{\"content\": \"$msg\"}" "$url" >/dev/null 2>&1
+# }
+
+# # --- 3. GESTÃO DE ERROS (TRAPS) ---
+
+# ice_enable_traps() {
+# 	trap 'ice_trace $? $LINENO "${BASH_SOURCE[0]}"' ERR
+# }
+
+# ice_trace() {
+# 	local code="$1" line="$2" file="$3"
+# 	local msg="🚨 FATAL ERROR: $file na linha $line (Código: $code)"
+
+# 	echo -e "${ICE_RED}--- ICE STACK TRACE ---${ICE_NC}"
+# 	ice_error "$msg"
+# 	ice_notify "$msg"
+# 	exit "$code"
+# }
+
+# # --- 5. UI E STRINGS ---
+
+# ice_trim() {
+# 	echo "$*" | xargs
+# }
+
+# # --- 6. MISC ---
+
+# # @description Cria diretório se não existir e entra nele
+# ice_safe_cd() {
+# 	local dir="$1"
+# 	if ! { mkdir -p "$dir" && cd "$dir"; }; then
+# 		ice_die "Não foi possível criar ou aceder a: $dir"
+# 	fi
+# }
+
+# # @description Garante privilégios de root
+# ice_require_root() {
+# 	if [[ $EUID -ne 0 ]]; then
+# 		ice_error "Este script precisa de privilégios de root."
+# 		${ICE_EXIT_COMMAND:-exit} 1
+# 	fi
+# }
+
+# @description Tenta obter o root
+ice_getroot() {
+	[[ $EUID -eq 0 ]] && return 0
+	# Proteção: Se já tentámos elevar e falhou, não repetimos
+	[[ -n "${_ICE_ELEVATED:-}" ]] && {
+		echo "Falha na elevação de privilégios."
+		exit 1
+	}
+	export _ICE_ELEVATED=1
+	echo "A elevar privilégios para root..."
+	exec sudo -E "$BASH" "$0" "$@"
+}
+
+ice_needs_root() {
+	[[ "$EUID" -eq 0 ]] && return 0
+	echo "ERRO: ${FUNCNAME[1]} precisa de privilégios elevados."
+	return 1
+}
+
+# # @description Gera uma string aleatória
+# ice_random_str() {
+# 	local len="${1:-12}"
+# 	tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len"
+# }
+
+# # @description Verifica se um ficheiro é de texto (evita binários)
+# ice_is_text_file() {
+# 	[[ -f "$1" ]] && file "$1" | grep -q "text"
+# }
+
+# # @description Remove códigos de cores ANSI da string
+# # Útil para gravar logs em ficheiros de texto simples
+# ice_text_clean() {
+# 	# Usamos printf para evitar problemas com hífens no início da mensagem
+# 	printf "%s" "$*" | sed 's/\x1b\[[0-9;]*m//g'
+# }
+
+ice_init
+ice_load_config

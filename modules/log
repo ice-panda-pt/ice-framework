@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+
+# @file log
+# @brief ICE Framework - Gestão e Monitorização de Logs
+# Namespace: ice_log_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'log' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_LOG_LOADED:-}" ]] && return 0
+readonly _ICE_LOG_LOADED=1
+
+# # @description Mostra as últimas N linhas do log do sistema (journalctl)
+# # @arg $1 string Nome do serviço (ex: nginx)
+# # @arg $2 int Número de linhas (padrão: 10)
+# ice_log_sys_view() {
+#     local svc="$1"
+#     local lines="${2:-10}"
+
+#     ice_info "Últimas $lines linhas de log para: $svc"
+#     journalctl -u "$svc" -n "$lines" --no-pager
+# }
+
+# # @description Procura por erros críticos nos logs do sistema na última hora
+# # @arg $1 string Nome do serviço
+# ice_log_check_errors() {
+#     local svc="$1"
+#     ice_info "A verificar erros em '$svc' na última hora..."
+
+#     if journalctl -u "$svc" --since "1h" | grep -qiE "error|fail|critical"; then
+#         ice_warn "Detetados erros potenciais em $svc. Verifica com ice_log_sys_view."
+#         return 1
+#     fi
+#     return 0
+# }
+
+# @description Esvazia um ficheiro de log gigante sem o apagar
+# @arg $1 string Caminho do ficheiro
+ice_log_truncate() {
+	[[ ! -f "$ICE_LOG_FILE" ]] && {
+		ice_error "Ficheiro não encontrado: $ICE_LOG_FILE"
+		return 1
+	}
+	# Usar : > file é mais seguro que rm pois mantém as permissões e o descritor aberto
+	: >"$ICE_LOG_FILE"
+	ice_success "Log truncado: $ICE_LOG_FILE"
+}
+
+# # @description Roda e comprime um log manual (versão simples do logrotate)
+# # @arg $1 string Caminho do ficheiro
+# ice_log_rotate_simple() {
+#     local file="$1"
+#     local timestamp; timestamp=$(date +%Y%m%d)
+
+#     [[ ! -f "$file" ]] && return 1
+
+#     ice_info "A rodar log: $file"
+#     mv "$file" "${file}.${timestamp}"
+#     gzip "${file}.${timestamp}"
+#     touch "$file"
+#     chmod 640 "$file"
+# }
+
+# @description Define o ficheiro de escrita de log
+ice_set_log_file() {
+	if [[ ! -v ICE_LOG_FILE ]]; then
+		readonly ICE_LOG_FILE="${1:-/tmp/ice_$(date +%Y%m%d).log}"
+		if ! touch "$ICE_LOG_FILE" 2>/dev/null; then
+			echo "FATAL: Não consigo criar o log em $ICE_LOG_FILE"
+			exit 1
+		fi
+		chmod 666 "$ICE_LOG_FILE" 2>/dev/null || true
+	fi
+}
+
+# @description Mostra a mensagem e grava no logfile, se existir
+ice_log() {
+	local level="${1:-}" ts color tag
+	case "$level" in
+	"INFO")
+		color="$ICE_BLUE"
+		tag="INFO"
+		shift
+		;;
+	"OK")
+		color="$ICE_GREEN"
+		tag=" OK "
+		shift
+		;;
+	"WARN")
+		color="$ICE_YELLOW"
+		tag="WARN"
+		shift
+		;;
+	"ERROR")
+		color="$ICE_RED"
+		tag="FAIL"
+		shift
+		;;
+	"DEAD")
+		color="$ICE_PURPLE"
+		tag="DEAD"
+		shift
+		;;
+	*)
+		color=""
+		tag="LOG "
+		;;
+	esac
+	msg="$*"
+	ts=$(date +'%Y-%m-%d %H:%M:%S')
+
+	# Output Terminal (com cor) e Ficheiro (limpo)
+	echo -e "[${color}$tag${ICE_NC}] $msg"
+	[[ -n "${ICE_LOG_FILE:-}" ]] && echo "[$ts] [$tag] $msg" >>"$ICE_LOG_FILE"
+	return 0
+}
+
+# @description Mostra uma mensagem de informação
+ice_info() { ice_log "INFO" "$*"; }
+
+# @description Mostra uma mensagem de sucesso
+ice_success() { ice_log "OK" "$*"; }
+
+# @description Mostra um aviso
+ice_warn() { ice_log "WARN" "$*"; }
+
+# @description Mostra um erro
+ice_error() { ice_log "ERROR" "$*" >&2; }
+
+# @description Mostra um erro e termina o script
+ice_fatal() {
+	ice_log "DEAD" "$*" >&2
+	exit 1
+}
+
+# @description Mostra uma mensagem e termina o script sem erro
+ice_die() {
+	ice_success "$*"
+	exit 0
+}

@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+
+# @file apt
+# @brief ICE Framework - Gestão especializada de pacotes APT (Debian/Ubuntu)
+# Namespace: ice_apt_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'apt' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_APT_LOADED:-}" ]] && return 0
+readonly _ICE_APT_LOADED=1
+
+ice_load_module "log"
+
+# @description Verifica se um pacote está instalado
+# @arg $1 Nome do pacote
+ice_apt_is_installed() {
+	[[ -z "${1:-}" ]] && return 1
+	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"
+}
+
+# @description Comando base resiliente para APT
+__ice_apt_cmd() {
+	[[ "$#" -lt 1 ]] && return 1
+	local comm="${1:-}"
+	shift 1
+	env DEBIAN_FRONTEND=noninteractive apt-get -yqq "$comm" \
+		-o Dpkg::Options::="--force-confdef" \
+		-o Dpkg::Options::="--force-confold" "$@"
+}
+
+# @description Atualiza os índices se tiverem mais de n horas (pré-definido 24)
+ice_apt_update() {
+	ice_needs_root || return 1
+	local max_age_h="${1:-24}" last_up
+	last_up=$(stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0)
+	if [ $(($(date +%s) - last_up)) -gt $((max_age_h * 3600)) ]; then
+		ice_info "A atualizar índices do APT..."
+		__ice_apt_cmd update --allow-releaseinfo-change
+	else
+		ice_info "Índices do APT atualizados recentemente."
+	fi
+}
+
+# @description Atualiza o sistema. Tenta o update antes.
+ice_apt_upgrade() {
+	ice_needs_root || return 1
+	local max_age_h="${1:-24}"
+	ice_apt_update "$max_age_h"
+	__ice_apt_cmd full-upgrade --fix-broken
+}
+
+# @description Instalação inteligente com verificação prévia
+ice_apt_install() {
+	ice_needs_root || return 1
+	[[ "$#" -eq 0 ]] && return 0
+
+	local to_install=()
+	for pkg in "$@"; do
+		if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+			to_install+=("$pkg")
+		fi
+	done
+	if [[ ${#to_install[@]} -gt 0 ]]; then
+		ice_info "A instalar " "${to_install[@]}"
+		ice_apt_update 2
+		__ice_apt_cmd install --fix-broken --no-install-recommends "${to_install[@]}"
+		return $?
+	else
+		ice_info "Todos os pacotes já se encontram instalados"
+	fi
+}
+
+# @description Repara o sistema de pacotes se houver interrupções
+ice_apt_fix() {
+	ice_needs_root || return 1
+	ice_info "A verificar e corrigir instalações"
+	dpkg --configure -a
+	__ice_apt_cmd install --fix-broken --no-install-recommends
+}
+
+ice_apt_purge() {
+	ice_needs_root || return 1
+	ice_info "A remover: $*"
+	local to_remove=""
+	for pkg in "$@"; do
+		if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+			to_remove+=("$pkg")
+		fi
+	done
+	[[ $# -gt 0 ]] && __ice_apt_cmd purge "${to_remove[@]}"
+	__ice_apt_cmd autopurge
+}
+
+# @description Instala um ficheiro .deb local e resolve as suas dependências
+# @arg $1 string Caminho para o ficheiro .deb
+ice_apt_install_file() {
+	ice_needs_root || return 1
+	local file="${1:-}"
+
+	# 1. Validações iniciais
+	[[ -z "$file" ]] && {
+		ice_error "ice_apt_install_file: Caminho do ficheiro em falta."
+		return 1
+	}
+	[[ ! -f "$file" ]] && {
+		ice_error "ice_apt_install_file: Ficheiro não encontrado: $file"
+		return 1
+	}
+
+	# 2. Garante que o caminho é absoluto ou começa por ./ (exigência do apt para ficheiros locais)
+	[[ "$file" != /* && "$file" != ./* ]] && file="./$file"
+
+	ice_info "A instalar pacote local: $file"
+
+	# Usamos apt em vez de dpkg -i para que as dependências sejam resolvidas automaticamente
+	if ice_apt_install "$file"; then
+		ice_success "Instalação de $file concluída."
+	else
+		ice_error "Falha ao instalar o ficheiro $file."
+		return 1
+	fi
+}
+
+ice_apt_require_bin() {
+	for cmd in "$@"; do
+		command -v "$cmd" >/dev/null 2>&1 && continue
+		ice_info "'$cmd' não encontrado. A tentar instalar..."
+		ice_needs_root || return 1
+		ice_apt_install "$cmd"
+		command -v "$cmd" >/dev/null 2>&1 && continue
+		ice_fatal "Falta binário: $cmd"
+	done
+}
+
+# # @description Remove um pacote com inteligência de estado (instalado vs apenas config)
+# # @arg $1 string Nome do pacote
+# ice_apt_remove() {
+# 	local pkg="$1"
+# 	[[ -z "$pkg" ]] && {
+# 		ice_error "ice_apt_remove: Nome do pacote em falta."
+# 		return 1
+# 	}
+
+# 	# Obtém o status completo do pacote via dpkg-query
+# 	local status
+# 	status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)
+
+# 	if [[ "$status" == *"ok installed"* ]]; then
+# 		ice_info "A desinstalar pacote: $pkg"
+# 		__ice_apt_cmd purge "$pkg"
+# 		__ice_apt_cmd autoremove
+# 		ice_success "Pacote '$pkg' removido e dependências limpas."
+
+# 	elif [[ "$status" == *"config-files"* ]]; then
+# 		# Caso o pacote tenha sido removido mas os ficheiros de config tenham ficado
+# 		ice_info "A limpar restos de configuração de: $pkg"
+# 		__ice_apt_cmd purge "$pkg"
+
+# 	else
+# 		ice_warn "Pacote '$pkg' não está instalado (nada a fazer)."
+# 	fi
+# }

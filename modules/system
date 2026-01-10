@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+
+# @file system
+# @brief ICE Framework - System & User Management Module
+# Namespace: ice_sys_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'log' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_SYS_LOADED:-}" ]] && return 0
+readonly _ICE_SYS_LOADED=1
+
+ice_load_module "log"
+ice_load_module "apt"
+ice_load_module "disk"
+
+# @description Verifica se um utilizador existe no sistema
+# @arg $1 string Nome do utilizador
+ice_sys_user_exists() { id "${1:-}" &>/dev/null; }
+
+# # @description Cria um utilizador de sistema (sem login) se não existir
+# # @arg $1 string Nome do utilizador
+# ice_sys_create_service_user() {
+# 	local user="$1"
+# 	if ice_sys_user_exists "$user"; then
+# 		ice_info "Utilizador '$user' já existe."
+# 		return 0
+# 	fi
+
+# 	ice_info "A criar utilizador de sistema '$user'..."
+
+# 	useradd -r -s /usr/sbin/nologin "$user" &&
+# 		ice_success "Utilizador '$user' criado com sucesso."
+# }
+
+# # @description Verifica se um grupo existe
+# # @arg $1 string Nome do grupo
+# ice_sys_group_exists() {
+# 	getent group "$1" &>/dev/null
+# }
+
+# # @description Adiciona o utilizador atual a um grupo (ex: docker)
+# # @arg $1 string Nome do grupo
+# ice_sys_add_to_group() {
+# 	local group="$1"
+# 	local user="${USER:-$(whoami)}"
+
+# 	if ! ice_sys_group_exists "$group"; then
+# 		ice_error "Grupo '$group' não existe."
+# 		return 1
+# 	fi
+
+# 	usermod -aG "$group" "$user"
+# 	ice_success "Utilizador '$user' adicionado ao grupo '$group'."
+# 	ice_warn "Nota: Poderá ser necessário fazer logout para as alterações surtirem efeito."
+# }
+
+# # @description Verifica a carga do sistema (Load Average)
+# # @stdout Retorna o load average dos últimos 1, 5 e 15 min
+# ice_sys_get_load() {
+# 	uptime | awk -F'load average:' '{ print $2 }' | sed 's/,//g'
+# }
+
+# # @description Obtém o tempo que o sistema está ligado (Uptime)
+# ice_sys_uptime() {
+# 	uptime -p | sed 's/up // '
+# }
+
+# Devolve a homedir de $1
+ice_sys_get_home() {
+	local user="${1:-}" homedir
+	[[ -z "$user" ]] && {
+		ice_error "get_home(): Nenhum utilizador indicado"
+		return 1
+	}
+	homedir=$(getent passwd "$1" | cut -d: -f6)
+	[[ -z "$homedir" ]] && {
+		ice_error "get_home(): Utilizador não encontrado: $user"
+		return 1
+	}
+	echo "$homedir"
+	return 0
+}
+
+# @description Executa um comando como outro utilizador
+# @arg $1 string Nome do utilizador
+# @arg $@ lista de comandos e argumentos
+ice_sys_run_as() {
+	[[ "$#" -lt 2 ]] && {
+		ice_warn "ice_sys_run_as: Precisa de pelo menos 2 parâmetros (utilizador comando)"
+		return 1
+	}
+
+	local user="${1:-}"
+
+	# Validação de existência do utilizador
+	if ! id -u "$user" >/dev/null 2>&1; then
+		ice_warn "ice_sys_run_as: Utilizador '$user' não existe no sistema."
+		return 1
+	fi
+
+	shift 1
+
+	# Executa o comando mantendo o ambiente controlado
+	# O -- garante que os argumentos do comando não sejam interpretados pelo runuser
+	runuser -u "$user" -- "$@"
+}
+
+# @description Verifica se o sistema é Debian 12 (Bookworm)
+ice_sys_debian12() {
+	[[ -f /etc/os-release ]] || return 1
+	(
+		# shellcheck source=/dev/null
+		source /etc/os-release
+		[[ "$ID" == "debian" && "$VERSION_ID" == "12" ]]
+	)
+}
+
+# @description Verifica se o sistema é Debian 13 (Trixie)
+ice_sys_debian13() {
+	[[ -f /etc/os-release ]] || return 1
+	(
+		# shellcheck source=/dev/null
+		source /etc/os-release
+		[[ "$ID" == "debian" && "$VERSION_ID" == "13" ]]
+	)
+}
+
+# @description Devolve o modelo real do hardware (DMI ou DeviceTree)
+# @exit 0 se conseguir identificar, uname -m como fallback
+ice_sys_get_hardware_model() {
+	local dmi_prod="/sys/class/dmi/id/product_name"
+	local dmi_board="/sys/class/dmi/id/board_name"
+	local arm_model="/sys/firmware/devicetree/base/model"
+
+	# 1. Tenta via DMI (Desktop/Servidores x86)
+	if [[ -f "$dmi_prod" ]]; then
+		cat "$dmi_prod"
+		return 0
+	fi
+
+	# 2. Fallback DMI (Motherboard)
+	if [[ -f "$dmi_board" ]]; then
+		cat "$dmi_board"
+		return 0
+	fi
+
+	# 3. Tenta via DeviceTree (Raspberry Pi / Outros ARM)
+	if [[ -f "$arm_model" ]]; then
+		# Remove caracteres nulos (\0) típicos do formato devicetree
+		tr -d '\0' <"$arm_model"
+		echo "" # Adiciona nova linha para limpeza
+		return 0
+	fi
+
+	# 4. Último recurso: Arquitetura do Kernel
+	uname -m
+}
+
+# @description Otimiza o sistema (serviços, RAM e boot)
+# @usage ice_system_optimize
+ice_sys_optimize() {
+	local override_dir sysctl_conf journal_conf disk_type
+	override_dir="/etc/systemd/system/preload.service.d"
+	sysctl_conf="/etc/sysctl.conf"
+	journal_conf="/etc/systemd/journald.conf"
+	disk_type=$(ice_disk_get_type /)
+
+	# 1. Otimização de Leitura (Preload)
+	if [[ "$disk_type" == "HDD" ]]; then
+		ice_info "HDD detetado. A configurar preload..."
+		ice_apt_install preload
+		mkdir -p "$override_dir"
+		ice_system_copy_check "$ICE_CONF/systemd/override.conf" "$override_dir"
+	else
+		# Em SSD/NVMe o preload é contraproducente
+		if dpkg -s preload &>/dev/null; then
+			ice_info "SSD/NVMe detetado. A remover preload desnecessário..."
+			ice_apt_purge preload
+		fi
+	fi
+
+	# 2. Configuração de Serviços Systemd
+	ice_info "A otimizar serviços de arranque..."
+	systemctl daemon-reload
+	systemctl restart --no-block preload 2>/dev/null || true
+
+	# Serviços que atrasam o boot ou são desnecessários
+	local services_to_disable=(
+		"NetworkManager-wait-online.service"
+		"ModemManager.service"
+	)
+
+	for service in "${services_to_disable[@]}"; do
+		if ice_srv_exists "$service" &>/dev/null; then
+			ice_srv_disable "$service" 2>/dev/null
+		fi
+	done
+
+	# Mask de serviços redundantes (bloqueio total)
+	systemctl mask --now avahi-daemon.service avahi-daemon.socket e2scrub_reap.service 2>/dev/null
+
+	# 3. Gestão de Memória e Swap (ZRAM)
+	ice_srv_stop zramswap 2>/dev/null
+	ice_system_copy_check "$ICE_CONF/default/zramswap" "/etc/default/"
+	systemctl enable --now e2scrub_all.timer zramswap
+
+	# Swappiness: Reduz a agressividade da swap para proteger o disco
+	sysctl vm.swappiness=10 >/dev/null
+	[[ ! -f "$sysctl_conf" ]] && touch "$sysctl_conf"
+	ice_cfg_set_value "$sysctl_conf" "vm.swappiness" 10
+
+	# 4. Otimização de Logs (Journald)
+	# Evita que os logs consumam muito espaço ou façam muitas escritas no disco
+	ice_cfg_set_value "$journal_conf" "SystemMaxUse" "50M"
+	ice_cfg_set_value "$journal_conf" "Storage" "volatile"
+
+	{
+		journalctl --vacuum-time=2d >/dev/null 2>&1
+		systemctl restart systemd-journald
+	} &
+
+	# 5. Otimização do Initramfs
+	# MODULES=dep garante que apenas os drivers necessários para o PC atual são incluídos
+	sed -i 's/^MODULES=.*/MODULES=dep/' "/etc/initramfs-tools/initramfs.conf"
+	update-initramfs -u
+
+	ice_success "Sistema otimizado com sucesso!"
+}
+
+# Matar os processos do $user
+ice_sys_kill_user() {
+	local user="${1:-}"
+
+	[[ "${ICE_DEBUG:-0}" -eq 1 ]] && ice_log "${FUNCNAME[0]}: A terminar processos de '$user'"
+	[[ -z "$user" || "$user" == "root" || "$user" == "$USER" ]] && return 0
+
+	if ! pgrep -u "$user" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	ice_info "A terminar sessão de $user..."
+	pkill -u "$user" >/dev/null 2>&1
+
+	local timeout=2
+	while pgrep -u "$user" >/dev/null 2>&1 && [[ $timeout -gt 0 ]]; do
+		sleep 0.5
+		((timeout--))
+	done
+
+	if pgrep -u "$user" >/dev/null 2>&1; then
+		ice_warn "Processos de $user persistentes. A forçar encerramento..."
+		pkill -9 -u "$user" >/dev/null 2>&1
+		sleep 0.5
+	fi
+}
+
+ice_sys_del_user() {
+	[[ $ICE_DEBUG -eq 1 ]] && log "${FUNCNAME[1]}() -> ${FUNCNAME[0]}(): $*"
+	local user="${user:-}"
+	[[ -z "$user" ]] && return 0
+	! id -u "$user" >/dev/null 2>&1 && return 0
+	ice_info "A remover $user"
+	ice_sys_kill_user "$user"
+	deluser --remove-home "$user" >/dev/null 2>&1 && {
+		ice_success "Utilizador $user removido"
+		return 0
+	}
+	userdel -r "$user" >/dev/null 2>&1 && {
+		ice_success "Utilizador $user removido (via userdel)."
+		return 0
+	}
+	ice_error "Falha crítica ao remover $user."
+	return 1
+}
+
+ice_sys_picom_supported() {
+	ice_apt_require_bin "glxinfo"
+	local direct_rendering renderer cores
+	direct_rendering=$(DISPLAY=${DISPLAY:-:0} glxinfo | grep "direct rendering" | head -n 1 | cut -d: -f2 | xargs)
+	[[ "$direct_rendering" != "Yes" ]] && return 1
+	renderer=$(DISPLAY=${DISPLAY:-:0} glxinfo | grep "OpenGL renderer string" | cut -d: -f2 | xargs)
+	[[ "$renderer" == *"llvmpipe"* || "$renderer" == *"Software"* ]] && return 1
+	cores=$(nproc)
+	[[ "$cores" -lt 2 ]] && return 1
+	return 0
+}
+
+# @description Faz uma limpeza e correção completa (Sistema + Utilizadores)
+ice_sys_clean() {
+	ice_info "A iniciar a limpeza do sistema..."
+
+	# Assumimos que o módulo 'apt' está carregado
+	if [[ "$(type -t __ice_apt_cmd)" == "function" ]]; then
+		ice_info "A corrigir e atualizar pacotes..."
+		ice_apt_fix
+		ice_apt_upgrade 0
+
+		ice_info "A limpar pacotes obsoletos e cache..."
+		ice_apt_purge
+	fi
+
+	# 2. Limpeza de Logs (Journald)
+	ice_info "A limpar logs do sistema (manter apenas últimos 2 dias)..."
+	journalctl --vacuum-time=2d >/dev/null 2>&1
+
+	# 3. Limpeza de Utilizadores (BleachBit)
+	if ! command -v bleachbit >/dev/null; then
+		ice_warn "Bleachbit não instalado. A saltar limpeza de perfis."
+	else
+		# Identifica utilizadores reais no /home
+		local users
+		users=$(find /home -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | grep -vE 'lost\+found|vagrant|guest|backup')
+
+		local options=(
+			"bash.*" "chromium.*" "firefox.*" "gimp.*" "google_chrome.*" "java.*"
+			"libreoffice.*" "system.tmp" "system.trash" "system.cache"
+			"thumbnails.*" "vlc.*" "wine.*" "x11.*"
+		)
+
+		for U in $users; do
+			ice_info "A limpar lixo do utilizador: $U..."
+			if [[ "$(type -t ice_system_run_as)" == "function" ]]; then
+				ice_sys_run_as "$U" bleachbit --clean "${options[@]}" 2>&1 | grep "recuperado"
+			else
+				su - "$U" -c "bleachbit --clean ${options[*]}" 2>&1 | grep "recuperado"
+			fi
+		done
+	fi
+
+	ice_success "Limpeza do sistema concluída."
+}

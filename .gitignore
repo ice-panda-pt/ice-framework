@@ -1,0 +1,9 @@
+*.log
+tmp/
+.vscode/
+tests/results/
+docs/*.html
+.ice.conf
+.env
+.env.*
+!.env.example

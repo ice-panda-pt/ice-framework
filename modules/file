@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Namespace: ice_file_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'file' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_FILE_LOADED:-}" ]] && return 0
+readonly _ICE_FILE_LOADED=1
+
+ice_load_module "log"
+
+# @description Verifica se um ficheiro existe e copia-o para o destino, criando a estrutura de pastas
+# @arg $1 string Caminho do ficheiro de origem
+# @arg $2 string Caminho da diretoria de destino
+ice_file_copy_check() {
+	[[ "$#" -ne 2 ]] && {
+		ice_warn "ice_file_copy_check: Exige 2 parâmetros (origem destino)"
+		return 1
+	}
+
+	local name="${1:-}"
+	local dest="${2:-}"
+
+	# 1. Verifica existência do ficheiro
+	if [[ ! -f "$name" ]]; then
+		ice_warn "ice_file_copy_check: Ficheiro '$name' não encontrado."
+		return 1
+	fi
+
+	# 2. Cria a diretoria de destino se não existir (-p não dá erro se já existir)
+	if ! mkdir -p "$dest"; then
+		ice_error "ice_file_copy_check: Erro ao criar diretoria '$dest'."
+		return 1
+	fi
+
+	# 3. Copia mantendo atributos (permissões, datas, etc)
+	if cp -a "$name" "$dest"; then
+		ice_success "Copiado: $name -> $dest"
+	else
+		ice_error "ice_file_copy_check: Erro ao copiar '$name' para '$dest'."
+		return 1
+	fi
+}

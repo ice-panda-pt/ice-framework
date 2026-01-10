@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# @file services
+# @brief ICE Framework - Systemd Service Management
+# Namespace: ice_srv_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'services' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_SERVICES_LOADED:-}" ]] && return 0
+readonly _ICE_SERVICES_LOADED=1
+
+# @description Verifica se um serviço existe no sistema
+# @arg $1 string Nome do serviço
+ice_srv_exists() {
+	systemctl list-unit-files --type=service | grep -q "^${1:-}.service"
+}
+
+# @description Verifica se um serviço está ativo (running)
+# @arg $1 string Nome do serviço
+ice_srv_is_active() { systemctl is-active --quiet "$1"; }
+
+# # @description Garante que um serviço está a correr. Se não estiver, inicia-o.
+# # @arg $1 string Nome do serviço
+# ice_service_ensure_started() {
+#     local svc="$1"
+#     if ice_service_is_active "$svc"; then
+#         ice_info "Serviço '$svc' já está em execução."
+#         return 0
+#     fi
+
+#     ice_info "A iniciar serviço: $svc..."
+#     if systemctl start "$svc"; then
+#         ice_success "Serviço '$svc' iniciado."
+#         return 0
+#     else
+#         ice_error "Falha ao iniciar serviço: $svc"
+#         return 1
+#     fi
+# }
+
+# @description Reinicia um serviço
+# @arg $1 string Nome do serviço
+ice_srv_restart() {
+	ice_info "A reiniciar serviço: $*..."
+	if systemctl restart "$@"; then
+		ice_success "Serviço '$*' reiniciado com sucesso."
+	else
+		ice_error "Erro ao reiniciar serviço: $* "
+		return 1
+	fi
+}
+
+# @description Ativa o serviço no arranque do sistema (enable)
+# @arg $@ - Nome/s do/s serviço/s
+ice_srv_enable() {
+	ice_info "A configurar ${*} para iniciar no boot..."
+	systemctl enable "$@"
+	#systemctl start "$@"
+}
+
+# @description Desativa o serviço no arranque do sistema (disable)
+# @arg $@ - Nome/s do/s serviço/s
+ice_srv_disable() {
+	ice_info "A configurar ${*} para não iniciar no boot..."
+	systemctl disable "$@"
+	#systemctl stop "$@"
+}
+
+# @description Para o serviço
+# @arg $@ - Nome/s do/s serviço/s
+ice_srv_stop() {
+	ice_info "A parar ${*}..."
+	systemctl stop "$@"
+}
+
+# # @description Faz reload da configuração do serviço (sem interromper ligações)
+# # @arg $1 string Nome do serviço
+# ice_service_reload() {
+#     local svc="$1"
+#     ice_info "A recarregar configuração de: $svc..."
+#     systemctl reload "$svc" || systemctl restart "$svc"
+# }

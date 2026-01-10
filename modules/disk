@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+
+# @file disk
+# @brief ICE Framework - Disk Management Module
+# Namespace: ice_disk_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'disk' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_DISK_LOADED:-}" ]] && return 0
+readonly _ICE_DISK_LOADED=1
+
+ice_load_module "log"
+
+# # @description Obtém a percentagem de uso de uma partição
+# # @arg $1 string Caminho da partição (padrão: /)
+# ice_disk_usage() {
+#     local path="${1:-/}"
+#     df -h "$path" | awk 'NR==2 {print $5}' | sed 's/%//'
+# }
+
+# @description Verifica se há espaço suficiente antes de uma operação
+# @arg $1 string Espaço necessário em MB
+# @arg $2 string Caminho a verificar (padrão: /)
+ice_disk_free_mb() {
+	local path="${1:-}"
+	if [[ ! -d "$path" ]]; then
+		echo 0
+		return 1
+	fi
+	# Obtém espaço disponível em MB
+	df -Pm "$path" | awk 'END{print $4}'
+	return 0
+}
+
+# # @description Lista as partições mais cheias (acima de um limite)
+# # @arg $1 int Limite em percentagem (padrão: 80)
+# ice_disk_check_alerts() {
+#     local threshold="${1:-80}"
+#     local alerts=()
+
+#     while read -r line; do
+#         local usage
+#         usage=$(echo "$line" | awk '{print $5}' | sed 's/%//')
+#         local mount
+#         mount=$(echo "$line" | awk '{print $6}')
+
+#         if [ "$usage" -gt "$threshold" ]; then
+#             alerts+=("$mount ($usage%)")
+#         fi
+#     done < <(df -h | grep '^/dev/')
+
+#     if [ ${#alerts[@]} -gt 0 ]; then
+#         ice_warn "Alerta de Espaço: As seguintes partições estão acima de $threshold%: ${alerts[*]}"
+#         return 1
+#     fi
+#     return 0
+# }
+
+# # @description Cria um backup comprimido (tar.gz) de uma pasta
+# # @arg $1 string Pasta de origem
+# # @arg $2 string Pasta de destino
+# ice_disk_backup_folder() {
+#     local src="$1"
+#     local dest="$2"
+#     local name
+#     name=$(basename "$src")
+#     local timestamp
+#     timestamp=$(date +%Y%m%d_%H%M%S)
+#     local filename="${dest}/${name}_${timestamp}.tar.gz"
+
+#     [[ ! -d "$src" ]] && { ice_error "Origem de backup não encontrada: $src"; return 1; }
+#     mkdir -p "$dest"
+
+#     ice_info "A criar backup de $src em $filename..."
+#     if tar -czf "$filename" -C "$(dirname "$src")" "$name"; then
+#         ice_success "Backup concluído: $(du -sh "$filename" | awk '{print $1}')"
+#         return 0
+#     else
+#         ice_error "Falha ao criar backup."
+#         return 1
+#     fi
+# }
+
+# @description Identifica o tipo de tecnologia do disco (HDD, SSD, NVMe)
+# @arg $1 string Caminho da diretoria (padrão: .)
+# @stdout Retorna o tipo de disco ou "DESCONHECIDO"
+ice_disk_get_type() {
+	local target="${1:-.}"
+	# Validação de existência
+	if [[ ! -e "$target" ]]; then
+		echo "INEXISTENTE"
+		return 1
+	fi
+
+	# 1. Obter o dispositivo real (resolvendo links simbólicos e montagens)
+	local dev_source
+	dev_source=$(df --output=source "$target" 2>/dev/null | tail -n 1)
+
+	# Trata sistemas de ficheiros virtuais (tmpfs, nfs, etc.)
+	if [[ "$dev_source" != /dev/* ]]; then
+		echo "VIRTUAL"
+		return 0
+	fi
+
+	# 2. Obter info de rotação e nome do dispositivo pai
+	# O tail -n 1 garante que pegamos no disco físico e não na partição
+	local disk_info
+	disk_info=$(lsblk -n -s -o ROTA,NAME "$dev_source" | grep -v "loop" | tail -n 1)
+
+	local rota name
+	read -r rota name <<<"$disk_info"
+
+	# 3. Lógica de Identificação
+	if [[ "$rota" == "1" ]]; then
+		echo "HDD"
+	elif [[ "$rota" == "0" ]]; then
+		if [[ "$name" == *"nvme"* ]]; then
+			echo "NVMe"
+		else
+			echo "SSD"
+		fi
+	else
+		echo "DESCONHECIDO"
+		return 1
+	fi
+	return 0
+}

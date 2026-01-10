@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+# @file ui
+# @brief ICE Framework - Interface do Utilizador
+# Namespace: ice_ui_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'apt' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_UI_LOADED:-}" ]] && return 0
+readonly _ICE_UI_LOADED=1
+
+# @description Espera que o utilizador carregue numa tecla para prosseguir
+# @arg $1 string Mensagem personalizada (opcional)
+ice_ui_keywait() {
+	local msg="${1:-Pressione uma tecla para continuar...}"
+
+	# -r: impede que a barra invertida escape caracteres
+	# -s: modo silencioso (não mostra a tecla premida)
+	# -n 1: lê apenas um carácter
+	read -rsp "$msg" -n 1
+	echo "" # Adiciona uma linha nova após a pressão da tecla
+}
+
+# @description Pede uma string ao utilizador
+# @arg $1 Mensagem/Pergunta
+# @arg $2 Valor por defeito (opcional)
+ice_ui_ask() {
+	local prompt="${1:-}" default="${2:-}" response
+
+	[[ -n "$default" ]] && prompt="$prompt [$default]"
+
+	read -r -p "$prompt: " response
+	echo "${response:-$default}"
+}
+
+# @description Pergunta de Sim ou Não (Y/N)
+# @arg $1 Pergunta
+# @exit 0 para Sim, 1 para Não
+ice_ui_confirm() {
+	local prompt="${1:-Tem a certeza?} [s/N]"
+	read -p "$prompt: " -n 1 -r reply
+	echo "" # Nova linha
+	if [[ ${reply,,} =~ ^(s|y)$ ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# @description Apresenta um menu de opções simples
+# @arg $1 Título do menu
+# @arg $@ Opções do menu
+# @return Devolve o texto da opção selecionada
+ice_ui_menu() {
+	local options=("$@")
+
+	select opt in "${options[@]}" "Sair"; do
+		case "$opt" in
+		"Sair") return 1 ;;
+		*)
+			if [[ -n "$opt" ]]; then
+				echo "$opt"
+				return 0
+			fi
+			;;
+		esac
+	done
+}
+
+# @description Mostra um banner/título de secção destacado
+ice_ui_banner() {
+	local msg=" $* " edge
+	edge=$(printf "%*s" "${#msg}" "" | tr ' ' '=')
+	echo -e "\n${ICE_BLUE}${edge}"
+	echo -e "${msg}"
+	echo -e "${edge}${ICE_NC}\n"
+}
+
+ice_ui_box() {
+	local msg=" $* " edge corner="+" vert="|"
+	edge=$(printf "%*s" "${#msg}" "" | tr ' ' '-')
+	echo -e "\n${ICE_BLUE}${corner}${edge}${corner}"
+	echo -e "${vert}${msg}${vert}"
+	echo -e "${corner}${edge}${corner}${ICE_NC}\n"
+}
+
+ice_ui_header() {
+	echo -e "${ICE_PURPLE}=== $* ===${ICE_NC}"
+}
+
+# @description Inicia um spinner visual num processo separado
+# @arg $1 string Mensagem a exibir ao lado do spinner
+ice_ui_spinner_start() {
+	[[ -v ICE_SPINNER_PID ]] && return 1
+	local msg="${1:-A processar...}" delay=0.1 spinstr="|/-\\"
+	tput civis
+
+	(
+		trap 'tput cnorm; exit' SIGTERM
+		while true; do
+			local temp=${spinstr#?}
+			printf "\r [%c]  %s" "$spinstr" "$msg"
+			spinstr=$temp${spinstr%"$temp"}
+			sleep $delay
+		done
+	) &
+
+	ICE_SPINNER_PID=$!
+}
+
+# @description Pára o spinner iniciado anteriormente
+ice_ui_spinner_stop() {
+	local pid="${ICE_SPINNER_PID:-}"
+	if [[ -n "$pid" ]]; then
+		kill "$pid" >/dev/null 2>&1
+		wait "$pid" 2>/dev/null || true
+
+		printf "\r%$(tput cols)s\r" ""
+		tput cnorm
+		unset ICE_SPINNER_PID
+	fi
+}
+
+# # @description Desenha uma barra de progresso no terminal
+# # @arg $1 int Percentagem (0 a 100)
+# # @arg $2 string Mensagem/Etiqueta (opcional)
+# ice_ui_progress_bar() {
+#     local percent="${1:-0}"
+#     local label="${2:-Processando}"
+
+#     # Garante que não ultrapassa 100
+#     (( percent > 100 )) && percent=100
+
+#     # Configurações visuais
+#     local width=40 # Largura total da barra de caracteres
+#     local filled=$(( (percent * width) / 100 ))
+#     local empty=$(( width - filled ))
+
+#     # Cores (assumindo que tens as variáveis no core)
+#     local color_bar="${ICE_GREEN:-}"
+#     local color_reset="${ICE_NC:-}"
+
+#     # Cria as strings da barra
+#     local bar_filled; bar_filled=$(printf "%${filled}s" | tr ' ' '=')
+#     local bar_empty; bar_empty=$(printf "%${empty}s" | tr ' ' '-')
+
+#     # Imprime a linha: [=======----] 70% Etiqueta
+#     printf "\r [%s%s%s%s] %3d%%  %s" "$color_bar" "$bar_filled" ">" "$bar_empty" "$percent" "$label"
+
+#     # Se chegar a 100, limpa a linha e imprime sucesso
+#     if (( percent == 100 )); then
+#         printf "\n"
+#     fi
+# }

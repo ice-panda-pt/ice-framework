@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# @file media
+# @brief ICE Framework - Gestão de Vídeo e Áudio
+# Namespace: ice_media_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'media' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+ice_load_module "log"
+ice_load_module "speech"
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_MEDIA_LOADED:-}" ]] && return 0
+readonly _ICE_MEDIA_LOADED=1
+
+# === GESTÃO DE ÁUDIO ===
+
+# # @description Define o volume do sistema (0-100)
+# # @arg $1 int Percentagem do volume
+# ice_media_set_volume() {
+#     local vol="${1:-50}"
+#     ice_info "A definir volume para: ${vol}%"
+#     # Tenta amixer (ALSA/Pulse)
+#     amixer -D pulse sset Master "${vol}%" >/dev/null 2>&1 || \
+#     amixer sset Master "${vol}%" >/dev/null 2>&1
+# }
+
+# # @description Remove o mute do áudio
+# ice_media_unmute() {
+#     ice_info "A remover Mute do áudio..."
+#     amixer -D pulse sset Master unmute >/dev/null 2>&1 || \
+#     amixer sset Master unmute >/dev/null 2>&1
+# }
+
+# # === GESTÃO DE VÍDEO (X11) ===
+
+# # @description Obtém a resolução atual do ecrã principal
+# ice_media_get_resolution() {
+#     xrandr | awk '/*/{print $1; exit}'
+# }
+
+# # @description Define a resolução de um ecrã
+# # @arg $1 string Nome da saída (ex: HDMI-1)
+# # @arg $2 string Resolução (ex: 1920x1080)
+# ice_media_set_resolution() {
+#     local output="$1"
+#     local res="$2"
+
+#     if [[ -z "$output" || -z "$res" ]]; then
+#         ice_error "ice_media_set_resolution: Argumentos em falta (saída resolução)."
+#         return 1
+#     fi
+
+#     ice_info "A alterar $output para $res..."
+#     xrandr --output "$output" --mode "$res"
+# }
+
+# # @description Desliga/Liga o ecrã (útil para poupança de energia em quiosques)
+# # @arg $1 string 'on' ou 'off'
+# ice_media_screen_power() {
+#     local state="$1"
+#     case "$state" in
+#         off) xset dpms force off ;;
+#         on)  xset dpms force on ;;
+#         *)   ice_error "Estado inválido. Use 'on' ou 'off'." ;;
+#     esac
+# }
+
+# @description Verifica se o cabo HDMI está fisicamente ligado
+# @exit 0 se ligado, 1 se desligado
+ice_media_hdmi_connected() {
+	# 1. Tentativa via xrandr (se o ambiente gráfico estiver ativo)
+	if command -v xrandr >/dev/null 2>&1 && [[ -n "$DISPLAY" ]]; then
+		if xrandr | grep -qE "HDMI(-?[0-9])? connected"; then
+			return 0
+		fi
+	fi
+
+	# 2. Tentativa via Kernel (Fallback para modo consola/servidor)
+	# Procura em todos os dispositivos de vídeo por um estado "connected" num caminho HDMI
+	if grep -q "^connected" /sys/class/drm/card*-HDMI-*/status 2>/dev/null; then
+		return 0
+	fi
+
+	return 1
+}
+
+# # @description Lista as saídas de áudio disponíveis
+# ice_media_list_sinks() {
+#     pactl list short sinks | awk '{print $1, $2}'
+# }
+
+# @description Muda a saída de áudio e move os fluxos ativos
+# @arg $1 string ID ou nome do Sink (ex: 1 ou alsa_output.pci...)
+# @arg $2 string Nome amigável para a notificação
+ice_media_change_sink() {
+	local new_sink="$1"
+	local name="${2:-$1}"
+
+	[[ -z "$new_sink" ]] && {
+		ice_error "ice_media_change_sink: Sink não especificado."
+		return 1
+	}
+
+	if ! command -v pactl >/dev/null 2>&1; then
+		ice_error "Comando 'pactl' não encontrado."
+		return 1
+	fi
+
+	# 1. Define como saída padrão para novos sons
+	if pactl set-default-sink "$new_sink" 2>/dev/null; then
+
+		# 2. Move todos os sons que já estão a tocar para a nova saída
+		# Isso evita que tenhas de reiniciar o browser ou player
+		pactl list short sink-inputs | awk '{print $1}' | while read -r id; do
+			pactl move-sink-input "$id" "$new_sink" 2>/dev/null
+		done
+
+		ice_success "Saída de áudio alterada para: $name"
+
+		# 3. Notificação Visual (Apenas se houver um ecrã ativo)
+		if [[ -n "$DISPLAY" ]] && command -v notify-send >/dev/null 2>&1; then
+			notify-send "ICE Framework" "Saída de Áudio: $name" -i audio-volume-high
+		fi
+
+		# 4. Feedback Auditivo (Opcional, se o módulo speech estiver carregado)
+		ice_speak "Áudio alterado para $name"
+	else
+		ice_error "Falha ao mudar para o sink: $new_sink"
+		return 1
+	fi
+}

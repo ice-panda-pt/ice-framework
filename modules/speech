@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+# @file speech
+# @brief ICE Framework - Feedback por Voz (TTS)
+# Namespace: ice_speech_
+
+set -euo pipefail
+
+if [[ -z "${_ICE_CORE_LOADED:-}" ]]; then
+	echo "Erro: O módulo 'speech' requer que o 'core' seja carregado primeiro."
+	exit 1
+fi
+
+# Impedir carregamento duplo
+[[ -n "${_ICE_SPEECH_LOADED:-}" ]] && return 0
+readonly _ICE_SPEECH_LOADED=1
+
+# @description Faz o sistema falar um texto
+# @arg $1 string Mensagem a falar
+# @arg $2 string Língua (padrão: pt-pt)
+ice_speak() {
+	# Captura o texto e remove possíveis tags []
+	local msg
+	msg="${*//\[*\]/}"
+
+	# Debug e Verificação de ativação
+	[[ "$ICE_DEBUG" -eq 1 ]] && ice_log "[DBUG] ${FUNCNAME[0]} -> $msg"
+	[[ "$ICE_SPEAK" -eq 0 ]] && return 0
+
+	local SPEAK_BUSY="/tmp/ice_voice.lock"
+
+	# Sistema de semáforo (Lock) para evitar sobreposição de vozes
+	local timeout=$ICE_SPEAK_WAIT
+	while [[ -f "$SPEAK_BUSY" ]]; do
+		sleep 0.1
+		((timeout--))
+		[[ $timeout -eq 0 ]] && return 1
+	done
+
+	touch "$SPEAK_BUSY"
+
+	# Execução em subshell background para não bloquear o script principal
+	(
+		if [[ -x "$PIPER_BIN" && -f "$PIPER_MODEL" ]]; then
+			# Piper: Voz Neural de alta qualidade
+			echo "$msg" | "$PIPER_BIN" --model "$PIPER_MODEL" --output_raw 2>/dev/null |
+				aplay -q -r 22050 -f S16_LE -t raw >/dev/null 2>&1
+		elif command -v espeak-ng >/dev/null 2>&1; then
+			# Espeak-ng: Sintese clássica (rápida e leve)
+			espeak-ng -v pt+f2 -s 130 "$msg" >/dev/null 2>&1
+		elif command -v espeak >/dev/null 2>&1; then
+			espeak -v pt-pt+f2 -s 130 "$msg" >/dev/null 2>&1
+		fi
+
+		# Liberta o semáforo após a fala terminar
+		rm -f "$SPEAK_BUSY"
+	) &
+}
+
+# # @description Instala o motor Piper e a voz PT-PT "Tugão"
+# ice_speech_install_piper() {
+#     local install_dir="/opt/ice/piper"
+#     local bin_url="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
+#     # Nota: URLs do HuggingFace precisam frequentemente do /resolve/ para download direto via wget
+#     local voice_url="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_PT/tug%C3%A3o/medium/pt_PT-tug%C3%A3o-medium.onnx"
+#     local json_url="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/pt/pt_PT/tug%C3%A3o/medium/pt_PT-tug%C3%A3o-medium.onnx.json"
+
+#     ice_info "A preparar ambiente para o Piper em $install_dir..."
+#     mkdir -p "$install_dir"
+#     cd "$install_dir" || return 1
+
+#     # 1. Instalação do Binário
+#     if [[ ! -f "piper" ]]; then
+#         ice_info "A transferir e extrair binário Piper..."
+#         bash -c "wget -q -O piper.tar.gz '$bin_url' && tar -xzf piper.tar.gz --strip-components=1 && rm piper.tar.gz"
+#         chmod +x piper
+#     fi
+
+#     # 2. Download da Voz (Onnx + Json)
+#     if [[ ! -f "pt_PT-tugao-medium.onnx" ]]; then
+#         ice_info "A transferir modelos de voz (Tugão)..."
+#         wget -q -O "pt_PT-tugao-medium.onnx" "$voice_url"
+#         wget -q -O "pt_PT-tugao-medium.onnx.json" "$json_url"
+#     fi
+
+#     # 3. Link simbólico para acesso global
+
+#     ln -sf "$install_dir/piper" /usr/local/bin/piper || ice_error "Falha ao criar link simbólico em /usr/local/bin"
+
+#     ice_success "Piper instalado com sucesso!"
+# }
