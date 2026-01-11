@@ -14,33 +14,33 @@ INSTALL_DIR="/opt/ice"
 BIN_LINK="/usr/local/bin/ice"
 
 echo -e "${BLUE}=======================================${NC}"
-echo -e "   Instalador ICE Framework v1.0"
+echo -e "   Instalador ICE Framework v1.0.0"
 echo -e "${BLUE}=======================================${NC}"
 
-# 1. Verificar privilégios
+# Verificar privilégios
 if [[ $EUID -ne 0 ]]; then
 	echo -e "${BLUE}[INFO]${NC} A tentar obter root..."
 	exec sudo "$0" "$@"
 fi
 
-# 2. Criar estrutura no sistema
+# Criar estrutura no sistema
 echo -ne "A criar diretórios em $INSTALL_DIR ... "
 mkdir -p "$INSTALL_DIR"/{lib,modules}
 echo -e "${GREEN}OK${NC}"
 
-# 3. Copiar ficheiros do pacote para o sistema
+# Copiar ficheiros do pacote para o sistema
 echo -ne "A instalar ficheiros core e configurações ... "
 tar xzf ice.tar.gz
-cd ice
+cd ice  || exit 1
 cp lib/core "$INSTALL_DIR/lib/"
 [[ -f config/ice.conf ]] && cp config/ice.conf "$INSTALL_DIR/" 
 [[ -f ice.conf ]] && cp ice.conf "$INSTALL_DIR/"
 cp -r modules/* "$INSTALL_DIR/modules/"
 echo -e "${GREEN}OK${NC}"
 
-# 4. Instalar Dependências (Piper e BATS)
+# 4. Instalar Dependências
 echo -ne "A validar dependências do sistema ... "
-apt-get update -qq && apt-get install -qq -y curl bats alsa-utils >/dev/null 2>&1
+apt-get update -qq && apt-get install -qq -y curl alsa-utils >/dev/null 2>&1
 echo -e "${GREEN}OK${NC}"
 
 # 5. Configurar o comando global 'ice'

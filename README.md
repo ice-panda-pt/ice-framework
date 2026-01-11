@@ -1,5 +1,5 @@
 # 🧊 ICE Framework
-Versão 1.0.0 | [100 Funções Testadas]
+Versão 1.0.0 [69 Funções]
 
 ## 🚀 Instalação
 ```bash
@@ -26,7 +26,9 @@ cd ice && sudo ./install.sh
 | `ice_apt_upgrade` | @description Atualiza o sistema. Tenta o update antes. |
 | `ice_apt_install` | @description Instalação inteligente com verificação prévia |
 | `ice_apt_fix` | @description Repara o sistema de pacotes se houver interrupções |
+| `ice_apt_purge` | @arg $@ Pacotes a remover |
 | `ice_apt_install_file` | @arg $1 string Caminho para o ficheiro .deb |
+| `ice_apt_require_bin` | @arg $@ Comandos a verificar |
 
 
 ### 📦 Módulo: CONFIG
