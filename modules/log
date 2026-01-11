@@ -15,30 +15,6 @@ fi
 [[ -n "${_ICE_LOG_LOADED:-}" ]] && return 0
 readonly _ICE_LOG_LOADED=1
 
-# # @description Mostra as últimas N linhas do log do sistema (journalctl)
-# # @arg $1 string Nome do serviço (ex: nginx)
-# # @arg $2 int Número de linhas (padrão: 10)
-# ice_log_sys_view() {
-#     local svc="$1"
-#     local lines="${2:-10}"
-
-#     ice_info "Últimas $lines linhas de log para: $svc"
-#     journalctl -u "$svc" -n "$lines" --no-pager
-# }
-
-# # @description Procura por erros críticos nos logs do sistema na última hora
-# # @arg $1 string Nome do serviço
-# ice_log_check_errors() {
-#     local svc="$1"
-#     ice_info "A verificar erros em '$svc' na última hora..."
-
-#     if journalctl -u "$svc" --since "1h" | grep -qiE "error|fail|critical"; then
-#         ice_warn "Detetados erros potenciais em $svc. Verifica com ice_log_sys_view."
-#         return 1
-#     fi
-#     return 0
-# }
-
 # @description Esvazia um ficheiro de log gigante sem o apagar
 # @arg $1 string Caminho do ficheiro
 ice_log_truncate() {

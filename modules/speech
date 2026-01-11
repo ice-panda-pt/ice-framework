@@ -59,7 +59,7 @@ ice_speak() {
 
 # # @description Instala o motor Piper e a voz PT-PT "Tugão"
 # ice_speech_install_piper() {
-#     local install_dir="/opt/ice/piper"
+#     local install_dir="/opt/piper"
 #     local bin_url="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
 #     # Nota: URLs do HuggingFace precisam frequentemente do /resolve/ para download direto via wget
 #     local voice_url="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_PT/tug%C3%A3o/medium/pt_PT-tug%C3%A3o-medium.onnx"
