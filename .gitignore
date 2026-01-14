@@ -7,3 +7,4 @@ docs/*.html
 .env
 .env.*
 !.env.example
+*.run
