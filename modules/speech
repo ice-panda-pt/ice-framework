@@ -38,7 +38,6 @@ ice_speak() {
 	done
 
 	touch "$SPEAK_BUSY"
-
 	# Execução em subshell background para não bloquear o script principal
 	(
 		if [[ -x "$PIPER_BIN" && -f "$PIPER_MODEL" ]]; then
