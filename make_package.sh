@@ -46,7 +46,7 @@ cd "$BUILD_DIR" || exit
 mkdir ice_install
 tar -czf ice_install/"$PACKAGE_NAME" ice/
 cp ../install.sh ice_install
-makeself ./ice_install ../"$SFX_NAME" "ICE Framework v$VERSION" ./install.sh
+makeself --xz ./ice_install ../"$SFX_NAME" "ICE Framework v$VERSION" ./install.sh
 
 cd ..
 echo -e "${GREEN}OK${NC}"
@@ -55,6 +55,6 @@ echo -e "${GREEN}OK${NC}"
 rm -rf "$BUILD_DIR"
 
 echo -e "${BLUE}=======================================${NC}"
-echo -e "${GREEN}PACOTE COMPLETO CRIADO COM SUCESSO!${NC}"
+echo -e "${GREEN}Pacote criado com sucesso${NC}"
 echo -e "Local: ./$SFX_NAME"
 echo -e "${BLUE}=======================================${NC}"
