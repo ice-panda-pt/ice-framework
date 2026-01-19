@@ -84,6 +84,8 @@ ice_apt_fix() {
 	__ice_apt_cmd install --fix-broken --no-install-recommends
 }
 
+# @description Remove pacotes e respetiva configuração
+# @arg $@ Pacotes a remover
 ice_apt_purge() {
 	ice_needs_root || return 1
 	ice_info "A remover: $*"
@@ -103,7 +105,6 @@ ice_apt_install_file() {
 	ice_needs_root || return 1
 	local file="${1:-}"
 
-	# 1. Validações iniciais
 	[[ -z "$file" ]] && {
 		ice_error "ice_apt_install_file: Caminho do ficheiro em falta."
 		return 1
@@ -113,7 +114,7 @@ ice_apt_install_file() {
 		return 1
 	}
 
-	# 2. Garante que o caminho é absoluto ou começa por ./ (exigência do apt para ficheiros locais)
+	# Garante que o caminho é absoluto ou começa por ./ (exigência do apt para ficheiros locais)
 	[[ "$file" != /* && "$file" != ./* ]] && file="./$file"
 
 	ice_info "A instalar pacote local: $file"
@@ -127,6 +128,8 @@ ice_apt_install_file() {
 	fi
 }
 
+# @description Verifica se os comandos existem e tenta instalar
+# @arg $@ Comandos a verificar
 ice_apt_require_bin() {
 	for cmd in "$@"; do
 		command -v "$cmd" >/dev/null 2>&1 && continue

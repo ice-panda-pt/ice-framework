@@ -26,19 +26,19 @@ ice_file_copy_check() {
 	local name="${1:-}"
 	local dest="${2:-}"
 
-	# 1. Verifica existência do ficheiro
+	# Verifica existência do ficheiro
 	if [[ ! -f "$name" ]]; then
 		ice_warn "ice_file_copy_check: Ficheiro '$name' não encontrado."
 		return 1
 	fi
 
-	# 2. Cria a diretoria de destino se não existir (-p não dá erro se já existir)
+	# Cria a diretoria de destino se não existir (-p não dá erro se já existir)
 	if ! mkdir -p "$dest"; then
 		ice_error "ice_file_copy_check: Erro ao criar diretoria '$dest'."
 		return 1
 	fi
 
-	# 3. Copia mantendo atributos (permissões, datas, etc)
+	# Copia mantendo atributos (permissões, datas, etc)
 	if cp -a "$name" "$dest"; then
 		ice_success "Copiado: $name -> $dest"
 	else

@@ -29,6 +29,7 @@ ice_init() {
 	else
 		readonly ICE_RED='' ICE_GREEN='' ICE_YELLOW='' ICE_BLUE='' ICE_PURPLE='' ICE_NC=''
 	fi
+	ice_enable_traps
 }
 
 # @description Carrega ficheiros de configuração (.ice.conf)
@@ -66,55 +67,6 @@ ice_load_module() {
 	return 1
 }
 
-# # --- 2. LOGGING E NOTIFICAÇÕES ---
-
-# ice_notify() {
-# 	local msg="$1"
-# 	local url="${ICE_WEBHOOK_URL:-}"
-# 	[[ -z "$url" ]] && return 0
-# 	curl -s -X POST -H "Content-Type: application/json" -d "{\"content\": \"$msg\"}" "$url" >/dev/null 2>&1
-# }
-
-# # --- 3. GESTÃO DE ERROS (TRAPS) ---
-
-# ice_enable_traps() {
-# 	trap 'ice_trace $? $LINENO "${BASH_SOURCE[0]}"' ERR
-# }
-
-# ice_trace() {
-# 	local code="$1" line="$2" file="$3"
-# 	local msg="🚨 FATAL ERROR: $file na linha $line (Código: $code)"
-
-# 	echo -e "${ICE_RED}--- ICE STACK TRACE ---${ICE_NC}"
-# 	ice_error "$msg"
-# 	ice_notify "$msg"
-# 	exit "$code"
-# }
-
-# # --- 5. UI E STRINGS ---
-
-# ice_trim() {
-# 	echo "$*" | xargs
-# }
-
-# # --- 6. MISC ---
-
-# # @description Cria diretório se não existir e entra nele
-# ice_safe_cd() {
-# 	local dir="$1"
-# 	if ! { mkdir -p "$dir" && cd "$dir"; }; then
-# 		ice_die "Não foi possível criar ou aceder a: $dir"
-# 	fi
-# }
-
-# # @description Garante privilégios de root
-# ice_require_root() {
-# 	if [[ $EUID -ne 0 ]]; then
-# 		ice_error "Este script precisa de privilégios de root."
-# 		${ICE_EXIT_COMMAND:-exit} 1
-# 	fi
-# }
-
 # @description Tenta obter o root
 ice_getroot() {
 	[[ $EUID -eq 0 ]] && return 0
@@ -128,11 +80,47 @@ ice_getroot() {
 	exec sudo -E "$BASH" "$0" "$@"
 }
 
+# @description Verifica se tem privilégios elevados
 ice_needs_root() {
 	[[ "$EUID" -eq 0 ]] && return 0
 	echo "ERRO: ${FUNCNAME[1]} precisa de privilégios elevados."
 	return 1
 }
+
+# # --- GESTÃO DE ERROS (TRAPS) ---
+
+# @description Liga o trap
+ice_enable_traps() {
+	trap 'ice_trace $? $LINENO "${BASH_SOURCE[0]}"' ERR
+}
+
+# @description Função chamada se ocorrer um erro
+# @arg $1 Código que gerou o erro
+# @arg $2 Linha do erro
+# @arg $3 Ficheiro
+ice_trace() {
+	local code="$1" line="$2" file="$3"
+	local msg="🚨 FATAL ERROR: $file na linha $line (Código: $code)"
+
+	echo -e "${ICE_RED}--- ICE STACK TRACE ---${ICE_NC}"
+	ice_error "$msg"
+	# 	ice_notify "$msg"
+	exit "$code"
+}
+
+# # --- MISC ---
+
+# ice_trim() {
+# 	echo "$*" | xargs
+# }
+
+# # @description Cria diretório se não existir e entra nele
+# ice_safe_cd() {
+# 	local dir="$1"
+# 	if ! { mkdir -p "$dir" && cd "$dir"; }; then
+# 		ice_die "Não foi possível criar ou aceder a: $dir"
+# 	fi
+# }
 
 # # @description Gera uma string aleatória
 # ice_random_str() {
@@ -150,6 +138,13 @@ ice_needs_root() {
 # ice_text_clean() {
 # 	# Usamos printf para evitar problemas com hífens no início da mensagem
 # 	printf "%s" "$*" | sed 's/\x1b\[[0-9;]*m//g'
+# }
+
+# ice_notify() {
+# 	local msg="$1"
+# 	local url="${ICE_WEBHOOK_URL:-}"
+# 	[[ -z "$url" ]] && return 0
+# 	curl -s -X POST -H "Content-Type: application/json" -d "{\"content\": \"$msg\"}" "$url" >/dev/null 2>&1
 # }
 
 ice_init

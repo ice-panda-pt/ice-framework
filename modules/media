@@ -74,14 +74,14 @@ readonly _ICE_MEDIA_LOADED=1
 # @description Verifica se o cabo HDMI está fisicamente ligado
 # @exit 0 se ligado, 1 se desligado
 ice_media_hdmi_connected() {
-	# 1. Tentativa via xrandr (se o ambiente gráfico estiver ativo)
+	# Tentativa via xrandr (se o ambiente gráfico estiver ativo)
 	if command -v xrandr >/dev/null 2>&1 && [[ -n "$DISPLAY" ]]; then
 		if xrandr | grep -qE "HDMI(-?[0-9])? connected"; then
 			return 0
 		fi
 	fi
 
-	# 2. Tentativa via Kernel (Fallback para modo consola/servidor)
+	# Tentativa via Kernel (Fallback para modo consola/servidor)
 	# Procura em todos os dispositivos de vídeo por um estado "connected" num caminho HDMI
 	if grep -q "^connected" /sys/class/drm/card*-HDMI-*/status 2>/dev/null; then
 		return 0
@@ -112,10 +112,10 @@ ice_media_change_sink() {
 		return 1
 	fi
 
-	# 1. Define como saída padrão para novos sons
+	# Define como saída padrão para novos sons
 	if pactl set-default-sink "$new_sink" 2>/dev/null; then
 
-		# 2. Move todos os sons que já estão a tocar para a nova saída
+		# Move todos os sons que já estão a tocar para a nova saída
 		# Isso evita que tenhas de reiniciar o browser ou player
 		pactl list short sink-inputs | awk '{print $1}' | while read -r id; do
 			pactl move-sink-input "$id" "$new_sink" 2>/dev/null
@@ -123,12 +123,12 @@ ice_media_change_sink() {
 
 		ice_success "Saída de áudio alterada para: $name"
 
-		# 3. Notificação Visual (Apenas se houver um ecrã ativo)
+		# Notificação Visual (Apenas se houver um ecrã ativo)
 		if [[ -n "$DISPLAY" ]] && command -v notify-send >/dev/null 2>&1; then
 			notify-send "ICE Framework" "Saída de Áudio: $name" -i audio-volume-high
 		fi
 
-		# 4. Feedback Auditivo (Opcional, se o módulo speech estiver carregado)
+		# Feedback Auditivo (Opcional, se o módulo speech estiver carregado)
 		ice_speak "Áudio alterado para $name"
 	else
 		ice_error "Falha ao mudar para o sink: $new_sink"

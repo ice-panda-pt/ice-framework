@@ -10,8 +10,9 @@ test:
 
 # Simula uma instalação no sistema
 install:
-	mkdir -p /usr/local/bin
-	cp bin/meu-script /usr/local/bin/
-	chmod +x /usr/local/bin/meu-script
+	mkdir -p /opt/ice/lib /opt/ice/modules
+	cp config/ice.conf /opt/ice/
+	cp lib/core /opt/ice/lib
+	cp modules/* /opt/ice/modules
 
 all: lint test

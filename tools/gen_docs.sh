@@ -5,7 +5,7 @@ DOC_FILE="README.md"
 
 {
 	echo "# 🧊 ICE Framework"
-	echo "Versão 1.0.0 | [100 Funções Testadas]"
+	echo "Versão 1.0.0 [69 Funções]"
 	echo -e "\n## 🚀 Instalação"
 	echo "\`\`\`bash"
 	echo "tar -xzf ice-v1.0.0.tar.gz"
